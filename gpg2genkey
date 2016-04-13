@@ -2,6 +2,8 @@
 #small script to generate a pgp/gpg key using gpg2.
 #uses known best parameters for generating the key. (no old/broken algos.)
 #one parameter is required: the name of the key to be generated.
+#designed for generating keys for use by textrecv, but could serve as a
+#starting point for generating keys for other purposes.
 
 #CAVEATS: (important, please read)
   #key is suitable for signing ONLY. not an encryption key. this will not

@@ -1,0 +1,26 @@
+#!/bin/bash
+gpgname="$1"
+
+if [ -z "$gpgname" ]; then
+  echo ERROR: required param: key name
+  exit 1
+fi
+
+gpg2 --gen-key --batch --no-tty <<END
+Key-Type: RSA
+Key-Length: 4096
+Key-Usage: sign
+Name-Real: $gpgname
+Name-Comment: $gpgname
+Name-Email: no.actual@email
+Expire-Date: 2104-12-31
+Preferences: SHA512 SHA384 SHA256 SHA224 AES256 AES192 AES CAST5 ZLIB BZIP2 ZIP Uncompressed
+%echo generating key; you may need to move the mouse a bunch to produce enough entropy
+END
+
+    echo now move the $gpgname private key onto the corresponding textsend system
+    echo private key can be exported by running:
+    echo "  "gpg2 --export-secret-keys $gpgname \> secret.key
+    echo public key can be exported by running:
+    echo "  "gpg2 --export $gpgname \> public.key
+

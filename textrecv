@@ -1,0 +1,787 @@
+#!/bin/bash
+
+#tunables
+#gpgname=checkin_vm_code_integrity
+gpgname=sensitive
+listenaddress=172.16.233.193
+#listenport=19300
+if [ -z "$dropprivs_via_sudo" ]; then
+  dropprivs_via_sudo=true   #change to false to disable.... but !!not recommended!!
+fi
+
+
+
+#not tunables
+me=`whoami`
+
+
+function die(){
+  code=`shift`
+  echo ERROR $code in textrecv: "$*" 1>&2
+  cleanup
+  trap - EXIT #disable premature exit trap
+  exit $code
+}
+
+function edit_while_locked(){
+  prog="$1"
+  file="$2"
+  [ "$file" == "" ] && exit
+  (
+    if flock -w 10 -n 9 ; then
+      PATH=`echo "$PATH"|perl -wpe 's|'$HOME'/bin||g; s/::+/:/g; s/^:|:$//g'`
+      "$prog" "$file"
+      exitstatus=$?
+      rm "$file".lock:
+      exit $exitstatus
+    fi
+  ) 9>"$file".lock:
+}
+
+#check for wrapping an editor
+prog=`basename "$0"`
+if [ "$prog" == pico -o "$prog" == nano -o "$prog" == vi -o "$prog" == vim ]; then
+  file=$1
+  edit_while_locked "$prog" "$file"
+  die 253 "ewl failed... failed to get lock?"
+fi
+
+if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+  cat <<END
+Usage:
+  textrecv --server port             #start the textrecv server
+  textrecv --install username port   #install textrecv and setup to run automatically
+  textrecv --uninstall               #undo install
+  textrecv --test                    #built-in test
+  textrecv --help                    #this page
+END
+
+  exit
+fi
+
+if [ "$1" == "--test" ]; then
+  if [ -z "$2" ]; then
+    source=/usr/include/X11
+  else
+    source=$2
+  fi
+  bn=`basename $source`
+
+  export dropprivs_via_sudo=false #for testing
+  export skip_nc=yes
+
+  textsend $source | textrecv --one-tarball || die 209 "and then textrecv fail"
+  rm $source/.textsend.flag
+  mv ~/textrecv/$bn/textrecv.log: ~/textrecv/$bn.textrecv.log:
+  diff -bur $source ~/textrecv/$bn || die 210 "diff fail"
+  echo test succeeded
+  exit
+fi
+
+if [ "$1" == "--server" ]; then #?
+  port=$2
+  if [ $me == root ] || [ ~ == ~root ]; then
+    die 11 "dont run textrecv --server as root!"
+  fi
+
+  [ -d ~/textrecv ] || mkdir ~/textrecv/
+  cd ~/textrecv/                        || die 2 "~/textrecv/ doesnt exist, tried to create it"
+
+  set -o pipefail
+  while true; do
+    exec >temp_log: 2>&1
+    nc -d -n -l $listenaddress $port | ~/bin/textrecv --one-tarball || die 40 "nc/textrecv pipeline failed"
+    [ -n "$ONCE" ] && exit
+  done
+
+  exit
+fi
+
+if [ "$1" == "--install" ]; then #
+  username="$2"
+  port=$3
+  #this is probably the least portable part of this script
+  #depends on adduser, sudo, homedirs in /home/
+
+
+  if [ $me != root ]; then
+    die 11 "textrecv --install must run as root!"
+  fi
+
+  if [ "$username" == "" ]; then
+    die 11 "username must not be blank"
+  fi
+
+  if [ "$port" == "" ]; then
+    die 11 "port must not be blank"
+  fi
+
+  #create textrecv user (which will run the server) and lower-privilege auxillary user which untars things
+  if ! egrep "^${username}:" /etc/passwd ; then
+    yes | adduser --quiet --disabled-login "$username" >/dev/null
+  fi
+  if [ "$dropprivs_via_sudo" != "false" ] ; then
+    yes | adduser --quiet --ingroup nogroup --disabled-login "$username"_tarrunner >/dev/null
+  fi
+  #for equivalent of adduser on macos, see https://superuser.com/questions/202814
+  #.... if it ever matters. if you're using textrecv on macos, you're probably doing it wrong.
+
+  userhomedir=$(eval echo $(echo ~${username}))
+
+  if [ -z "$NO_GEN_KEY" ]; then
+    su -c "gpg2 --gen-key --batch --no-tty" "$username" <<END
+Key-Type: RSA
+Key-Length: 4096
+Key-Usage: sign
+Name-Real: $gpgname
+Name-Comment: $gpgname
+Name-Email: no.actual@email
+Expire-Date: 2104-12-31
+Preferences: SHA512 SHA384 SHA256 SHA224 AES256 AES192 AES CAST5 ZLIB BZIP2 ZIP Uncompressed
+%echo generating key; you may need to move the mouse a bunch to produce enough entropy
+END
+    echo now move the $gpgname private key onto the corresponding textsend system
+    echo private key can be exported by running:
+    echo "  "su -c \"gpg2 --export-secret-keys $gpgname\" "$username" \> secret.key
+  fi
+
+  mkdir                                   "$userhomedir"_tarrunner/tardata/
+  chown "$username"_tarrunner:"$username" "$userhomedir"_tarrunner/tardata/
+  chmod g+rwx                             "$userhomedir"_tarrunner/tardata/
+
+  [ -d "$userhomedir"/bin/ ] || mkdir /home/"$username"/bin/
+  cp $0 "$userhomedir"/bin/
+  chmod u+x "$userhomedir"/bin/textrecv
+  ln -s "$userhomedir"/bin/textrecv "$userhomedir"/bin/pico
+  ln -s "$userhomedir"/bin/textrecv "$userhomedir"/bin/nano
+  ln -s "$userhomedir"/bin/textrecv "$userhomedir"/bin/vi
+  ln -s "$userhomedir"/bin/textrecv "$userhomedir"/bin/vim
+  chown -h "$username:$username"   "$userhomedir"/bin "$userhomedir"/bin/*
+  echo "export PATH=$userhomedir"/bin:'$PATH' >>"$userhomedir"/.profile
+  if [ -e "$userhomedir"/.bash_profile ] ; then
+    #chain to .bash_profile from .profile (but if running as bash only)
+    #just so modifying PATH in .profile above doesn't disable .bash_profile
+    #(cause bash doesn't execute .bash_profile if .profile exists)
+    echo '[ `basename "$0"` == "bash" -a -e ~/.bash_profile ] && source ~/.bash_profile' >>"$userhomedir"/.profile
+  fi
+
+  tag="#textrecv for $username server startup"
+  cmd="su '$username' -c '$userhomedir/bin/textrecv --server $port' &    $tag"
+  egrep "^ *[^#].*$tag\$" /etc/rc.local >/dev/null ||
+    perl -i -wpe '
+      BEGIN{$cmd="'"$cmd"'"};
+      unless($done){
+        $done=1 if (s/^(#!.*)$/$1\n$cmd/ || s/^(.*)$/$cmd\n$1/);
+        #after shebang if any, else before first line
+      }
+    ' /etc/rc.local
+
+    #service in rc.local is sorta yucky, but its portable!
+    #easier than dealing with all the various startup systems
+    #especially the worst one!
+  eval "$cmd"
+
+
+  #sudo really bites. there are so many problems and limitations with it!
+  #pattern matching in command rules is by glob rather than regexp. glob is much more limited.
+  #effectively, glob is useless for any kind of realistic pattern matching. but it's not even
+  #the same glob as used in bash: * and ? in sudo's glob can match spaces! this means that
+  #* effectively always means "and as many other arguments as you want". which pretty much ruins
+  #the point of filtering arguments in sudo at all. since you _have_ to use glob if you want to do
+  #any kind of nontrivial argument match other than a fully fixed set of arguments. (since there's no
+  #kleene star or kleene plus).
+  #furthermore. the sudoers syntax is convoluted and squirrely. clearly the result of many incremental
+  #hacks to jam in overly-narrow features one at a time instead of a coherent design. the result is messy and
+  #unreadable. and then, if you mess up the syntax of your sudoers file (or even just one fragment in
+  #sudoers.d) (and this is far too easy considering sudoers's horrible syntax) the result is that sudo
+  #always errors out and refuses to do anything useful! this makes it far too easy to lock yourself out
+  #of root access on your system altogether on systems where sudo is by default the only way to get to
+  #root. which is some very popular OSs, like macos and ubuntu. This is a nasty, nasty failure mode.
+  #sudo's sanctioned solution to this problem seems to be that the user should always use visudo to edit
+  #a sudo config file, which does prevent this failure mode. but it's stupid to ask a user to remember
+  #something like that. and visudo seems to only be capable of changing /etc/sudoers itself, it won't
+  #handle fragments in /etc/sudoers.d/. and then there's this other command sudoedit... why are there
+  #two commands for this one (ultra-narrow!) task? sudoedit doesn't even avoid the failure mode.
+  #now let's talk about the fact that sudo preserves the $HOME of the invoking user. but no other
+  #environment by default. why???? maybe i'm stupid but i don't see the point of this. it's totally
+  #useless. it just causes confusion every time. this is what causes people to type commands like:
+  #sudo su -c "....". which is just weird. at least it can be turned off, (now that i understand the
+  #problem and know how) but why is it the default?
+  #what else? well, the man page sucks. it's so hard to understand how to write a sudoers, you have
+  #to read the whole damn thing carefully to get anywhere. use of bnf in the man page is not helping.
+  #i should be able to understand the basics (not every little detail, just the obvious) by looking
+  #in the first few pages, not have to dig down 12 pages to get to the essential meat.
+  #it sucks that you have to specify the fully-qualified path to every binary that you're granting
+  #access to. that's just lame. it makes sudoers files less useful and portable and serves no realistic
+  #security purpose that i can see.
+  #now for the biggest issue of all: it's useless and stupid for sudo to even exist in the first place!
+  #sudo is supposed to be a more capable and secure replacement for su, but it fails at this job entirely.
+  #the thinking goes something like this: su is bad because it requires you to type the root password
+  #all the time to do any system configuration but that's unsafe. someone might look over your shoulder
+  #or capture it with a keylogger or something. (this is a moderately real concern. sudo doesn't solve
+  #it, tho.) better to use sudo because it doesn't require you to use the root password! you can just
+  #use your normal user password instead! in fact, you don't even have to have a root password at all.
+  #so much better!!!!1! lolz!!!!111!! plus, sudo is so configurable! you can set it up to allow narrow
+  #access to just the few capabilities you need.
+  #in fact, this is bunkum. if there is a password which enables root-level access to the system, then
+  #that is effectively a root password, regardless of whether you call it a user account or not. I call
+  #these accounts that "have sudo" root-equivalent accounts. effectively, sudo is encouraging people to run
+  #everything as root, by telling them to set up root-equivalent accounts. as for configurability, we've
+  #already covered the many reasons why the config language sucks. yeah, it can be done if you learn
+  #the stupid sudoers syntax and dodge around and learn to live with the various limitations. but it's
+  #more trouble than it's worth. i'm making use of it here, but i shouldn't have bothered.
+  #there are 2 things sudo does above su which a slightly nice: it enables logging of commands run as sudo
+  #and root permissions revokable on a per-user basis. this can be useful on large servers where many
+  #people need root access. kinda. except. logging is semi-useless because often i will just type
+  #"sudo bash" to avoid the inconvenience of having to type sudo in front of every damn command i need
+  #to use. what happens inside that bash session doesn't get logged. anyway, hardly anyone ever looks at
+  #any kind of logs even on those big systems.
+  #per-user revokability is a nice feature, but it can be acheived (with slightly more difficulty) in
+  #other ways. for instance, have every admin create a different ssh key, all of which are allowed to
+  #log in as root. this has the disadvantage that there's more work to do when someone leaves the
+  #organization: you have to remove the key from every server on your system. (rather than just deleting
+  #an account on every system.) anyway, if you can't trust your admins (even former admins), then you have
+  #bigger problems. there are so many ways for a malicious admin to leave a backdoor onto a server.
+  #i'm surprised that admins of big-server environments are willing to allow such a steaming pile of
+  #shit onto their machines at all, even less playing such an important security role.
+  #in short, the problems and annoyances of sudo are many, and the advantages are really of only limited
+  #utility in large organizations with lots of admins. sudo makes no sense whatsoever on (either
+  #desktop or server) systems with only one or even 2 or 3 users. so, why is it pre-installed and the
+  #the default on manifestly single-user desktop systems like ubuntu and macos?
+
+
+  tarrunner_bin="$userhomedir"/tarrunner_bin
+
+  mkdir $tarrunner_bin
+  chown -h "$username:$username"  $tarrunner_bin
+
+  ln -sf `which file rm gunzip tar chmod` $tarrunner_bin/
+  chown -h "$username":"$username" $tarrunner_bin $tarrunner_bin/*
+    #why which?
+
+  if [ "$dropprivs_via_sudo" != "false" ] ; then
+    fragment="$username"_controls_a_textrecv_tarrunner
+    cat  >/etc/sudoers.d/$fragment <<END
+      Defaults>${username}_tarrunner always_set_home #
+      $username ALL = (${username}_tarrunner) NOPASSWD: $tarrunner_bin/
+END
+    if ! sudo -l >/dev/null ;  then
+      mv /etc/sudoers.d/$fragment /tmp/
+      echo "oops, attempt to write a sudoers fragment caused a sudoers syntax error"
+      echo "deleting the bad fragment, so you're not locked out of root access(!)"
+      echo "bad fragment placed in /tmp/$fragment for review"
+      if ! sudo -l >/dev/null ;  then
+        echo "hoboy, sudoers still broken even after the new fragment is deleted"
+        echo "you better do something about that right now"
+        [ -e /etc/sudoers.d/$fragment ] && echo "new fragment still exists, despite my attempt to get rid of it"
+      else
+        echo "no more sudoers syntax error now"
+      fi
+    fi
+  fi
+
+  exit
+fi
+
+if [ "$1" == "--uninstall" ]; then
+  #depends on deluser, home dirs in /home
+
+  username="$2"
+  if [ -z "$2" ]; then
+    die 11 "textrecv --uninstall requires a username argument"
+  fi
+
+
+  if [ $me != root ]; then
+    die 11 "textrecv --uninstall must run as root!"
+  fi
+
+  if ! egrep -q -s "^${username}_tarrunner:" /etc/passwd ; then
+    die 91 "textrecv --uninstall called for username it wasn't installed for"
+  fi
+
+  deluser "$username"_tarrunner
+  rm -rf /home/"$username"_tarrunner/
+
+  #stop running server instances (and anything else $username is doing)
+  pids=`ps -axu| tr -s ' ' ' '|grep ^$username|cut -d' ' -f2`
+  [ -n "$pids" ] && kill $pids
+
+  if [ `ls /home/$username/textrecv -a|egrep -v '^\.\.?$|:$'|wc -l` == "0" ]; then
+    #textrecv dir empty, so destroy it
+    rm -rf /home/"$username"/textrecv
+  else
+    echo "there is still data in /home/$username/textrecv, please save it elsewhere (eg git push)"
+    echo "and then feel free to:     rm -rf /home/$username/textrecv"
+  fi
+  echo "if not used for anything else, you should:     deluser $username && rm -rf /home/$username"
+
+  perl -wpe 's/^([^#].* #textrecv for '"$username"' server startup)$/#$1/' -i /etc/rc.local
+
+  rm -f /etc/sudoers.d/"$username"_controls_a_textrecv_tarrunner
+
+  exit
+fi
+
+needcleanup="y"
+
+tarrunner_bin=/home/"$me"/tarrunner_bin
+
+gzish=""
+listing=""
+filename_listing=""
+gpglog=""
+name=bad
+fn_safe_list='/a-zA-Z0-9.,:@^%=_-'
+dirname_unsafe_chars="[^$fn_safe_list]"
+dirname_safe_chars="[$fn_safe_list]"
+  #forbid non-ascii, control chars, shell specials
+
+
+function cleanup(){
+  cd ~/textrecv
+
+  rm -f modified:  #is this still needed?
+
+  test -n "$gzish" && rm -f "$gzish"
+  gzish=""
+  test -n "$listing" && rm -f "$listing"
+  listing=""
+  test -n "$filename_listing" && rm -f "$filename_listing"
+  filename_listing=""
+  test -n "$gpglog" && rm -f "$gpglog"
+  gpglog=""
+
+  if [ "$name" != "bad" ]; then
+    as_tarrunner rm -rf /home/"$me"_tarrunner/tardata/$name
+    rm -rf staging:/$name
+    rm metadata:/$name.{current,new,delete}filelist
+  fi
+
+  echo -e "\n\n"
+
+  if [ -e temp_log: ]; then
+    if  [ "$name" != "bad" ]; then
+      log=$name/textrecv.log:
+    else
+      log=log:
+    fi
+    cat temp_log: >> $log
+    rm temp_log:
+  fi
+}
+
+function premature_exit(){
+  die 13 "signal received"
+}
+
+function huh(){
+  die 14 huh:" "$1
+}
+
+
+function validate_tarball(){
+  tarball=$1
+
+  #tarball must be a tar in the gnu tar format
+  if ! as_tarrunner gunzip -c <$tarball | as_tarrunner file -b - | egrep -q '^POSIX tar archive \(GNU\)$' ; then
+    die 20 "bad tar file type or format"
+  fi
+
+
+  #extract an ls -l -ish listing from tarball
+  listing=`tempfile --prefix=listg`
+  filename_listing=`tempfile --prefix=listf`
+  as_tarrunner tar tzvf - <$tarball --no-xattrs --no-selinux --no-acls > $listing || die 22 "tar t failed"
+  perl -wpe 's/ +/ /g' -i $listing
+  #listing fields: permissions owner size date time name
+
+  #examine listing for weird stuff
+  if egrep -i --color=never '^[^ ]*[st]' $listing; then #look for setuid/sticky bits
+    die 19 "bizarre permissions on file in tarball"
+  fi
+  if egrep -v --color=never '^[d-]([r-][w-][x-]){3} ' $listing; then
+    #special file of some kind?: volume label, fifo, device, symlink, hardlink
+    die 22 "special file or bad permissions in tarball"
+  fi
+
+  cut -d" " -f6- < $listing > $filename_listing
+
+  if grep -P --color=never '^$|^/|(^|/)[%@-]|(^|/)(\.\.?|\.git)($|/)|'"$dirname_unsafe_chars"'|[{}\[\]* ;<>`'"'"'"()&$#!?~|\\\\]' < $filename_listing ; then
+    #abend on:
+      #empty filenames
+      #filenames starting of . or .. or .git
+      #paths starting with / (absolute filename)
+      #filenames startign with - @ or % (could be special to shell or other programs)
+      #filenames with funny (non-printable-ascii or shell special) chars in them
+    die 21 "bizarre filename in tarball"
+  fi
+
+  cut -d/ -f1 < $filename_listing | sort -u > topdir:
+    #topdir is:
+      #6th space-delimited field in $listing (tar tv output),
+      #first slash-delimited field within that,
+  (( `wc -l <topdir:` == 1 )) || die 10 "all files in tarball should be in one directory"
+    #must have only one value across the entire file
+  (( `wc -c <topdir:` '<=' 200 )) || die 35 "toplevel dirname should be shortish"
+    #no more than 199 characters
+  egrep -q '^[a-zA-Z0-9_.,-]+$' --color=never topdir: || die 31 "bad top level dir name"
+    #only limited chars allowed in topdir name
+  name=`cat topdir:`
+  rm topdir:
+
+}
+
+function validate_directory(){ #
+  dir=$1
+  action=$2
+  if [ action == '-print' ]; then
+    actioncmd="echo rm -rf --"
+  elif [ action == '-delete' ]; then
+    actioncmd="rm -rf --"
+  fi
+
+
+
+  #sanitize files sent (sender should have done this too, but we dont depend on it)
+  #find $dir -depth -xdev -name .git -delete  #not needed/useful here anymore... done above
+  find $dir \! \( -type f -o -type d \) $action #only files/dirs allowed
+  find $dir -depth -xdev -regextype posix-extended -regex '.*(\]|\[|[{}* ;<>`'"'"'"()&$#!?~|\\\\]).*' $action #no shell specials in filenames
+  find $dir -depth -xdev -name '*'$'\n''*' $action #nl in filename disallowed (newline specialcase, ick)
+  find $dir -depth -xdev -regextype emacs -regex ".*$dirname_unsafe_chars.*" $action #only preapproved shellsafe ascii chars allowed
+  find $dir -depth -xdev -name '[@%-]*' $action #possibly misinterpreted aas flag by commands
+
+  #following checks need not worry about quoting filenames or -print0 in find because above ensured
+  #that all remaining files are safely named
+
+  #delete files with ext2/3/4 extended attrs
+  lsattr -Ra $dir | \
+    egrep -v '^$|^'$dir$dirname_safe_chars'*:$|^[-eI]+ |/\.\.?$' | \
+    cut -d" " -f2 | \
+    xargs -L100 $actioncmd
+
+  #delete files with special acl (special=more than traditional unix user/group/other perms)
+  getfacl -R -s $dir | egrep '^# file: ' | cut -d: -f2- | xargs -L100 $actioncmd
+
+  #delete files with extended attrs
+  find $dir -print | xargs -L100 xattr ignore 2>&1 | \
+    egrep '^'$dir$dirname_safe_chars'*: ' | perl -wpe 's/: $//' | \
+    xargs -L100 $actioncmd
+
+  #delete files with (possible) ansi esc seqs in file contents
+  find $dir -print | perl -wpe '
+    chomp($_);
+    open(FD,"<",$_);
+    until (eof(FD)){;
+      read(FD,$chunk,50*1024);
+      if ($chunk =~ /\e/){;
+        unlink $_;
+        last;
+      };
+    };
+    close(FD);
+    $_="";
+  '
+  #perl to do the real work, what a crock. shell sucks. grep sucks.
+
+  #find $dir -xdev -type f -print | xargs -n20 chmod -f a-w
+  #can't do this; will cause files to be checked-in read-only
+
+}
+
+function as_tarrunner(){ #
+  if [ "$dropprivs_via_sudo" == "false" ]; then
+    #\echo skipping sudo around $* 1>&2
+    $*
+  else
+    sudo -u "$me"_tarrunner $tarrunner_bin/$*
+  fi
+}
+
+
+function ungpg(){ #
+  #typical gpg2 output looks like this:
+    #gpg: encrypted with 4096-bit RSA key, ID CAAB59A0, created 2014-08-22
+    #      "caleb clausen (checkin_vm_code_integrity) <no@tha.nks>"
+    #gpg: Signature made Fri 12 Sep 2014 11:53:17 AM PDT using RSA key ID 738F71DD
+    #gpg: Good signature from "caleb clausen (checkin_vm_code_integrity) <no@tha.nks>"
+    #gpg: WARNING: This key is not certified with a trusted signature!
+    #gpg:          There is no indication that the signature belongs to the owner.
+    #Primary key fingerprint: 7A33 E68A 3A12 311E 11DF  EA8C A74C 91DE 738F 71DD
+
+  gpglog=`tempfile --prefix=gpgln`
+
+  #verify signature/extract the tarball to process
+  gpg2 --decrypt --no-auto-check-trustdb --batch --no-tty > $gzish 2> $gpglog \
+    || die 5 "gpg2 failed: $?" #reads signed file from stdin, writes to gzish
+    #input to gpg2 (on stdin) was generated from: gpg2 --sign --encrypt -u $gpgname $input_tarish
+    #--decrypt rather than --verify is necessary even tho we're _just_ verifying sigs in order to get the signed data printed to stdout
+
+  #protect_against_replay should also enforce sig presence
+
+  egrep '^gpg2?: Good signature from "[^"(]+ \('$gpgname'\) <[^>]+>"' $gpglog || die 5 "message not signed with expected key"
+
+  #put gpglog into log, but discarding success messages from gpglog. we want to see only errors
+  egrep -v '^(gpg2?: encrypted with [0-9a-zA-Z _-]+ key, ID [0-9A-F]{8}, created [0-9]{4}-[0-9]{2}-[0-9]{2}|(gpg2?:)? +"[^"(]+ \('$gpgname'\) <[^>]+>"|gpg2?: Signature made [A-Za-z0-9: ]+ using [A-Za-z0-9_ -]+ key ID [0-9A-F]{8}|gpg2?: Good signature from "[^"(]+ \('$gpgname'\) <[^>]+>"|gpg2?: WARNING: This key is not certified with a trusted signature!|gpg2?: +There is no indication that the signature belongs to the owner\.|^(gpg2?: *)?Primary key fingerprint: ([0-9A-F]{4}  ?)+[0-9A-F]{4})$' $gpglog
+}
+
+function put_log_in_proj_dir(){ #
+  name=$1
+  #any log messages so far have accumulated in temp_log:... put them in their final place
+  #and arrange for all output to go into the log
+  [ -d $name ] || mkdir $name #create the dir if doesn't exist already
+  exec >> $name/textrecv.log: 2>&1  #redir stdout/err to point to new(?) per-dir log
+  cat temp_log: >> $name/textrecv.log: #append log accumulated so far to per-dir log
+  rm temp_log:
+}
+
+function protect_against_replay(){ #
+  #!protect against replay attacks!
+  name=$1
+  gpglog=$2
+
+  #..first, save signature time from gpg2 output
+  if [ `egrep -c 'Signature made .* using .* key ID' $gpglog` != 1 ]; then
+    die 86 "multiple gpg timestamps present"
+  fi
+
+  signtime=`perl -wne '/^gpg2?: Signature made ([A-Za-z0-9: ]+) using [A-Za-z0-9_ -]+ key ID [0-9A-F]{8}$/ && print $1' < $gpglog`
+
+  if [ -z "$signtime" ] ||  echo "$signtime" | egrep -v -i '^[a-z]{3} [0-9]{1,2} [a-z]{3} [0-9]+ [0-9]{2}:[0-9]{2}:[0-9]{2} [ap]m [a-z+0-9_-]{2,6}$' ; then
+    die 88 "bad gpg timestamp format: $signtime"
+  fi
+
+  new_signtime=`date -d "$signtime" +%s` #cvt to time_t
+
+  if [ -e metatdata:$name.signtime ]; then
+    #..now, verify received sig newer than saved
+    old_signtime=`cat metadata:/$name.signtime`
+
+    if (( "$new_signtime" '<=' "$old_signtime" )) ; then
+      die 87 "gpg timestamp not greater than last timestamp"
+    fi
+  fi
+  echo $new_signtime > metadata:/$name.signtime  #remember last signtime for this name
+}
+
+if [ $me == root ] || [ ~ == ~root ]; then
+  die 11 "dont run textrecv as root!"
+fi
+
+
+if [ "$1" == '--validate-directory' ]; then #for testing
+  validate_directory $2 -print
+  exit
+fi
+
+
+
+#mkdir ~/textrecv/ >/dev/null 2>&1
+cd ~/textrecv/
+  #cant fail because --server should have ensured that it exists and were there already
+
+mkdir ~/textrecv/metadata: >/dev/null 2>&1
+mkdir ~/textrecv/staging: >/dev/null 2>&1
+
+
+
+#where gpg output will go
+gzish=`tempfile --prefix=targz`
+
+
+
+if [ "$1" == '--validate-tarball' ]; then #for testing
+  cat /dev/stdin > $gzish
+  dropprivs_via_sudo=false  #for testing only!
+  validate_tarball $gzish
+  cleanup
+  exit
+fi
+
+[ "$1" != '--one-tarball' ] && die 15 "unrecognized argument: $1"
+
+#main
+
+trap premature_exit EXIT
+
+echo ====receiving project:
+
+ungpg
+  #sets $gpglog to logfile containing gpg stdout/stderr (for protect_against_replay)
+  #also appends any true error messages in gpglog to full log file
+
+
+validate_tarball $gzish
+  #sets $name to name of project in this tarball
+
+
+[ $name == 'bad' ] && die 32 "name unset"
+
+
+
+put_log_in_proj_dir $name
+
+protect_against_replay $name $gpglog
+
+rm $gpglog
+
+if [ -e staging:/$name ]; then
+  die 28 "staging:/$name already exists"
+fi
+
+#actually extract stuff from tarball
+if [ "$dropprivs_via_sudo" != "false" ]; then
+  tarCdir=/home/"$me"_tarrunner/tardata/
+else
+  tarCdir=staging:/
+fi
+
+as_tarrunner tar xzf - <$gzish -C $tarCdir \
+  --no-xattrs --no-selinux --no-acls --one-file-system \
+  --exclude=.. --exclude=.git --exclude-vcs  || die 12 "tar extract failed: $?"
+
+if [ "$dropprivs_via_sudo" != "false" ]; then
+  as_tarrunner chmod -R a+r $tarCdir/$name
+  cp -dR --preserve=mode,timestamps $tarCdir/$name/ staging:/
+  chgrp -hR "$me" staging:/$name
+fi
+
+    #just made a dir named staging:/$name...
+
+
+[ -d staging:/$name ] || die 17 "extracting tarball didnt create $name/"
+
+validate_directory staging:/$name -delete
+
+#delete files present in last run but missing from this one
+if [ -e metadata:/$name.sha256sum ]; then
+  egrep -o '[^ ]+$' <metadata:/$name.sha256sum >metadata:/$name.currentfilelist
+  cd staging:
+  find $name -path '*:*' -prune -o -print >../metadata:/$name.newfilelist
+  cd ..
+  cat metadata:/$name.newfilelist \
+      metadata:/$name.newfilelist \
+      metadata:/$name.currentfilelist \
+        | sort | uniq -u > metadata:/$name.deletefilelist
+
+  (( `wc -c <metadata:/$name.deletefilelist` '>' 0 )) &&
+    xargs -l50 rm <metadata:/$name.deletefilelist
+fi
+
+#move the new files in staging: to final location, locking as we go
+cd staging:
+  find $name -type f -print | xargs -L100 sha256sum > ../metadata:/$name.sha256sum.new
+
+  for f in `find $name -print`; do
+    if [ -d $f ]; then
+      mkdir -p ../$f
+    else
+      (
+        if flock -n 9 && [ ! -e ../metadata/$name.sha256sum ] || egrep " $f$" ../metadata:/$name.sha256sum | sha256sum -c - ; then #if got lock and unchanged from last time
+          cp -a --parents $f ../
+          rm ../$f.lock:
+        else
+          cp -a $f ../$f.new:
+        fi
+      ) 9>../$f.lock:
+    fi
+  done
+
+  mv ../metadata:/$name.sha256sum{.new,}
+cd ..
+
+#TBD - future - maybe use backintime/backintime-kde instead?
+#gitautolog
+#  huh "bad! makes global filesystem changes. racy w/ interactive user"
+#  huh "too bad git commit wont take a branch to commit to"
+#  git branch autolog
+#  git checkout autolog
+#    git add -A .
+#    git commit --allow-empty-message
+#  git checkout master
+
+trap - EXIT #disable premature exit trap
+cleanup
+exit
+
+
+
+
+#  |in previous  |in new  |in working  |modified  ||how handled  |
+#  ---------------------------------------------------------------
+#  |ff** ||nop|
+#  |f*ft ||err|
+#  |fftt ||nop|
+#  |fttt ||nop,log|
+#  |ftff ||copy|
+#  |f*tf ||err|
+#  |t*ff ||err|
+#  |tfft ||nop|
+#  |tftf ||del|
+#  |tftt ||nop,log|
+#  |ttft ||copy,log|
+#  |tttf ||copy|
+#  |tttt ||log if new_changed|
+
+# err if !inprev and !inwork and modified
+# err if !modified and !inprev and inwork
+# err if !modified and inprev and !inwork
+# copy if innew and !modified
+# if inprev and !innew and inwork
+#   if modified
+#     log "delete aborted"
+#   else
+#     del
+#   end
+# end
+# log "overwrite of new file aborted by local modification" if !inprev and innew and inwork and modified
+# if inprev and innew and modified
+#   if inwork
+#     log if new_changed
+#   else
+#     copy,log "local delete overwritten"
+#   end
+# end <<<
+
+: <<END
+#before extract:
+find $name > in_working:
+egrep -o '[^ ]+$' metadata:/$name.sha256sum > in_previous:
+sha256sum --binary --check --quiet 2>/dev/null | cut -d: -f1 > modified:
+
+#after validate_directory:
+mv $filename_listing in_new:
+cat in_previous: in_new: in_working: modified: | sort -u > universe:
+huh calculate new_changed:
+
+#detect errors in modified set calculation
+cat modified: in_previous: in_previous: in_working: in_working: | sort | uniq -u > err_invalid_modified: #mod-inprev-inwork
+cat in_previous: modified: modified: in_working: in_working: | sort | uniq -u >> err_invalid_modified:   #inprev-mod-inwork
+cat in_working: modified: modified: in_previous: in_previous: | sort | uniq -u >> err_invalid_modified:  #inwork-mod-inprev
+
+#figure which files should be copied into new dir
+cat in_new: modified: modified: | sort | uniq -u > to_copy:  #to_copy=innew-mod
+
+#figure which files should be deleted (if unmodified... else log em)
+cat in_previous: in_working: | sort | uniq -d | cat - in_new: in_new: | sort | uniq -u > maybe_delete: #(inprev&inwork)-innew
+cat maybe_delete: modified: | sort | uniq -d > log_delete_aborted:
+cat maybe_delete: modified: modified: | sort | uniq -u > to_delete:
+
+#figure which files were recently created both remotely and locally. these collisions are logged
+cat in_new: in_work: | sort | uniq -d |
+  cat - modified: | sort | uniq -d |
+  cat - in_previous: in_previous: | sort | uniq -u > log_overwrite_aborted: #(innew&inwork&mod)-inprev
+huh "but what about in the next pass? remote change wont be copied over then either, so remote change is lost permanently?"
+
+#figure which files were modified locally...
+cat in_previous: in_new: | sort | uniq -d | cat - modified: | sort | uniq -d > modified_locally: #inprev&innew&mod
+#...if not deleted locally and changed in new fileset, log about remote change discarded
+cat modified_locally: in_work: | sort | uniq -d | cat - new_changed: | sort | uniq -d > log_remote_change_discarded:
+huh "but what about in the next pass? remote change wont be copied over then either, so remote change is lost permanently?"
+
+#...if was deleted locally, copy in from remote and log about undone delete
+cat modified_locally: in_work: | sort | uniq -d > local_delete_overwritten:
+
+
+huh actually use sets just calculated
+END

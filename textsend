@@ -1,0 +1,112 @@
+#!/bin/bash
+
+#configvars
+gpgname=sensitive
+server=172.16.233.193
+port=19363
+
+
+textsend=`which textsend`
+
+function die(){
+  echo ERROR $1 in textsend: "$2" 1>&2
+  exit  $1
+}
+
+if [ "$1" == '--cron' ]; then
+  shift
+
+  # help user set up cron job with dir to textsend in $1
+
+  {
+    crontab -l
+    echo @reboot $textsend --watchloop $1 ">>$1/textsend.log:" '2>&1'
+    echo @hourly $textsend --watchloop $1 ">>$1/textsend.log:" '2>&1'
+  } | crontab -
+  exit
+fi
+
+if [ "$1" == '--watch' ]; then
+  shift
+  if ! inotifywait -e modify -e attrib -e move -e create -e delete --exclude=':' -r $1 ; then
+    echo inotify failed: $? 1>&2
+    exit 2
+  fi
+fi
+
+if [ "$1" == '--watchloop' ]; then
+  shift
+
+  #ensure only one textsend --watchloop runs per directory
+  mkdir -p ~/tmp/`dirname $1`
+  (
+  flock -w 0.1 -n 9 || exit 1
+
+  $textsend $1
+
+  coproc inotifywait -e modify -e attrib -e move -e create -e delete -m --exclude=':' -r $1
+
+  while read -u ${COPROC[0]} line ; do
+    sleep 0.1
+
+    $textsend $1
+
+    #eat up extra backlogged lines before waiting for new events
+    while read -t 0.1 -u ${COPROC[0]} line ; do
+      false
+    done
+
+    sleep 9.8
+  done
+
+  #shouldn't get here
+  wait $COPROC_PID
+  echo inotify failed. exit status = $?. last line = $line 1>&2
+
+  ) 9> ~/tmp/$1   #more of one textsend --watchloop per dir
+
+  exit
+fi
+
+if [ -n "$skip_nc" ]; then
+  function nc(){
+    cat
+  }
+fi
+
+dir=$1
+if [ -n "$dir" ]; then
+  cd $dir || die 1 "cd failed"
+fi
+dir=`pwd`
+name=`basename $dir`
+cd .. || die 2 "cd failed"
+
+
+#check if this dir was sent already
+if [ -e "$name/.textsend.flag:" ]; then
+  newer_than_flag=`find $name -newer $name/.textsend.flag: -print | egrep -v "^$name/([^/]+/)*(\.git(/|$)|[^/]+~$)"`
+
+  if [ "$newer_than_flag" == '' ]; then
+    #no changes since last update, so do nothing
+    exit
+  fi
+fi
+
+
+if tar cf - --no-selinux /etc/issue >/dev/null ; then
+  NO_SELINUX=--no-selinux
+else
+  NO_SELINUX=
+fi
+
+set -o pipefail
+tar czf - $name                                                   \
+  $NO_SELINUX --no-acls --no-xattrs --one-file-system            \
+  --exclude-vcs --exclude-backups --exclude=$name/*:*             \
+| gpg2 --sign                                                     \
+  -u $gpgname --yes --batch --no-tty --no-auto-check-trustdb -    \
+| nc -n $server $port                                             \
+|| die 4 "tar/gpg2/nc pipeline failed"
+
+touch "$name"/.textsend.flag: #update flag indicating last successful send

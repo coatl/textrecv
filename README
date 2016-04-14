@@ -82,16 +82,6 @@ these restrictions are intended to make it safe to work with the files
 received by textrecv with ordinary shell tools without risk of system
 compromise, unexpected behavior, or need to think hard about it.
 
-in order to ensure data integrity, gpg2 is used to sign data sent from
-the dev to the checkin environments. a gpg2 keypair needs to be shared
-between the 2 environments. (dev needs the secret key, checkin should
-need just the public key, tho it's safe for both halves to be present
-there.) the script gpg2genkey will help you generate an appropriate
-key. be sure you have enough entropy on the system generating the key!
-as with all keys, be careful not to leave copies lying around other
-than on the system(s) where it is needed. use srm or another secure-
-wipe tool to delete extraneous copies.
-
 a very crude technique is used to configure both textsend and
 textrecv: there are a few variables at the top of both scripts that
 determine the address, port, and gpg2 keyname used to communicate over.
@@ -109,6 +99,18 @@ textsend can be installed using this command:
 this should be run as an ordinary user with permission to read the
 named directory. it will set up textsend to run automatically whenever
 the named source dir changes.
+
+in order to ensure data integrity, gpg2 is used to sign data sent from
+the dev to the checkin environments. a gpg2 keypair needs to be shared
+between the 2 environments. (dev needs the secret key, checkin should
+need just the public key, tho it's safe for both halves to be present
+there.) textrecv --install will help you generate an appropriate key,
+unless you set the NO_GEN_KEY environment variable. there's also a
+standalone script textrecv_genkey if you prefer to generate it
+separately. be sure you have enough entropy on the system generating
+keys! as with all keys, be careful not to leave copies lying around
+other than on the system(s) where it is needed. use srm or another
+secure-wipe tool to delete extraneous copies.
 
 textsend --cron requires a cron with linux-style magical @hourly and
 @reboot cron specifications. it also requires linux-like inotifywait.

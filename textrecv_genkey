@@ -1,5 +1,5 @@
 #!/bin/bash
-#small script to generate a pgp/gpg key using gpg2.
+#small script to generate a pgp/gpg key for use by textrecv using gpg2.
 #uses known best parameters for generating the key. (no old/broken algos.)
 #one parameter is required: the name of the key to be generated.
 #designed for generating keys for use by textrecv, but could serve as a
@@ -10,7 +10,7 @@
     #keep your data secret, only ensure it is unmodified.
     #easily enough changed by tweaking Key-Usage below.
   #expire date set is far in the future. this may not be what you want.
-
+  #key has bogus email address.
 
 gpgname="$1"
 

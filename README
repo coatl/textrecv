@@ -19,7 +19,7 @@ you were reviewing before checkin anyway, right? to make sure you
 didn't leave in printfs or other debugging code, and to help you
 compose the commit message, etc. all we're doing is moving the review
 and check-in to a different environment. don't think of these happening
-in checkin anymore.
+in dev anymore.
 
 the intent is to help in general ameliorate this kind of vulnerability:
   https://www.kb.cert.org/vuls/id/319816

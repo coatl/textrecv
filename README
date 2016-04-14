@@ -1,0 +1,121 @@
+textsend and textrecv comprise a system for safely moving source code 
+from one system to another over a network. textsend pushes source code 
+from a 'dev' system where it is authored and tested to a 'checkin' 
+system running textrecv where git (or another vcs) is used to publish 
+it.
+
+textsend and textrecv automate part of a workflow that help deter 
+unauthorized changes to your projects. however, they are no substitute 
+for thinking. you must review changes before checking the code in (you 
+were doing this anyway, right? to make sure you didn't leave in printfs 
+or other debugging code, and to help you compose the commit message, 
+etc).
+
+the intent is to help ameliorate vulnerabilities such as this one:
+  https://www.kb.cert.org/vuls/id/319816
+
+(note however that this tool does not at this time help with that 
+specific vulnerability, or others in package managers. this crude 
+little tool is intended to help keep malicious changes out of git, 
+and doesn't yet help you with full-fledged package managers such as 
+npm, rubygems, debian, etc.)
+
+in order to use this properly, you must have some other system for
+achieving priviledge isolation: the dev environment should be on a
+separate jail, container, virtual machine or distinct physical
+machine from the checkin environment. proper setup to acheive this
+isolation is well beyond the scope of these instructions, but a
+few specifics to note:
+
+  *  dev should not have any way to talk to checkin except the 
+     textsend/textrecv channel. 
+  *  you should not be able to ssh from dev to checkin. 
+  *  dev should not know any secret keys, passwords, or other secret 
+     credentials known to checkin. in particular, the git password
+     and/or secret key used to push to origin should not be present 
+     on dev. (exception: the secret gpg2 key used to authenticate
+     data sent from textsend to textrecv.)
+  *  you should never run any of the code transmitted by textrecv
+     in the checkin environment. best practice is for the requisite
+     interpreters or compilers needed to use the code simply not
+     be present on checkin.
+  *  as a special case of the last bullet item, tests, build scripts
+     or packaging scripts should never be run on the checkin 
+     environment.
+
+textrecv enforces the following restrictions on the data it receives:
+  *  only files and directories, no symlinks, devices, or other 
+     special files.
+  *  no extended/special attributes, sticky bits, setuid or other 
+     weird modes.
+  *  no funny business with filenames. in general, only normal-looking 
+     ascii is allowed in filenames. nothing that could be specially 
+     interpreted by the shell or common cmdline programs allowed in 
+     filenames. no utf-8. if you confine yourself to the normal 
+     characters for source file names, you will be fine:
+          a-z A-Z 0-9 . _ -  perhaps a few more
+  *  no binary files (or more specifically, no ansi escape char, \033) 
+     allowed. this restriction should still allow the full range of 
+     non-escape utf-8 chars in file contents.
+
+these restrictions are intended to make it safe to work with the files
+received by textrecv with ordinary shell tools without risk of system
+compromise or need to think hard about it.
+
+in order to ensure data integrity, gpg2 is used to sign data sent from
+the dev to the checkin environments. a gpg2 keypair needs to be shared 
+between the 2 environments. (dev needs the secret key, checkin should 
+need just the public key, tho it's safe for both halves to be present 
+there.) the script gpg2genkey will help you generate an appropriate 
+key. be sure you have enough entropy on the system generating the key! 
+as with all keys, be careful not to leave copies lying around other 
+than on the system(s) where it is needed. use srm or another secure-
+wipe tool to delete extraneous copies.
+
+
+
+a very crude technique is used to configure both textsend and 
+textrecv: there are a few variables at the top of both scripts that 
+determine the address, port, and gpg2 keyname used to communicate over. 
+edit these lines by hand to change the configuration. (do this 
+configuration first, before installing as in the next paragraphs.)
+
+textrecv can be installed using this command:
+    textrecv --install <username> <port>
+this should be run as root in the checkin environment. it will create 
+the requisite users (2 of them) and setup textrecv to start 
+automatically from /etc/rc.local .
+
+textsend can be installed using this command:
+    textsend --cron <dirname>
+this should be run as an ordinary user with permission to read the 
+named directory. it will set up textsend to run automatically whenever 
+the named source dir changes.
+
+textsend --cron requires a cron with linux-style magical @hourly and 
+@reboot cron specifications. it also requires linux-like inotifywait. 
+if you don't have/want those tools installed, you can still run 
+textsend manually; just pass the name of the directory to send as its 
+first argument. and invoke it yourself every time your source code 
+changes in dev.
+
+
+why use this tool instead of the many other ways to move files over a
+network? other tools are more general-purpose (even git) and not
+designed to avoid the perils of potentially malicious source code.
+rsync, for instance, makes no promises about file integrity (unless
+you use ssh as a transport). scp or sftp move files with guaranteed
+integrity, but require an ssh installation. it is _very_ tricky to
+install ssh in such a way as to allow file movement only and prohibit 
+all general remote execution. at least, I never saw an easy and fool-
+proof way to set up scp-only mode. (think you did it right? did you
+prevent write access to ~/.bashrc ? how about to the user's crontab? 
+or ~/.init/* on upstart-based systems (ubuntu and derivatives) ?) 
+not that it can't be done, but it's way more difficult it oughtta be.
+no other tool prevents shenanigans with filenames or escape sequences
+in file contents. (tho git tries to avoid them in branch and ref names)
+and all of those other tools are rather complicated by comparison. 
+textsend and textrecv are (still fairly) small and easy to audit.
+
+the name is terrible. I'm sorry, but I couldn't think of a better one.
+

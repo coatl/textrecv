@@ -25,11 +25,16 @@ the intent is to help in general ameliorate this kind of vulnerability:
   https://www.kb.cert.org/vuls/id/319816
 
 but we must consider this tool to be a stab in the right direction
-rather than a definitive solution. because this tool does not at this
-time help with that specific npm vulnerability, or others in package
+rather than a definitive solution. because it does not at this time
+help with that specific npm vulnerability, or others in package
 managers. this crude little tool is intended to help keep malicious
 changes out of git, and doesn't yet help you with full-fledged package
 managers such as npm, rubygems, debian, etc.
+
+a fuller solution would involve a way to build packages from git
+projects, perhaps automatically when a tag of a certain format is
+committed. but it is necessary to build the package without running
+any code in the project.
 
 textsend pushes source code from a 'dev' system where it is authored
 and tested to a 'checkin' system running textrecv where git (or

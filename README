@@ -41,7 +41,7 @@ and tested to a 'checkin' system running textrecv where git (or
 another vcs) is used to publish it.
 
 in order to use this properly, you must have some other system for
-achieving priviledge isolation: the dev environment should be on a
+achieving privilege isolation: the dev environment should be on a
 separate jail, container, virtual machine or distinct physical
 machine from the checkin environment. proper setup to acheive this
 isolation is well beyond the scope of these instructions, but a

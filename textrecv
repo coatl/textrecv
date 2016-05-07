@@ -354,7 +354,7 @@ function cleanup(){
   if [ "$name" != "bad" ]; then
     as_tarrunner rm -rf /home/"$me"_tarrunner/tardata/$name
     rm -rf staging:/$name
-    rm metadata:/$name.{current,new,delete}filelist
+    rm -f metadata:/$name.{current,new,delete}filelist
   fi
 
   echo -e "\n\n"

@@ -609,6 +609,7 @@ ungpg
   #sets $gpglog to logfile containing gpg stdout/stderr (for protect_against_replay)
   #also appends any true error messages in gpglog to full log file
 
+echo ===`date +'%d%b%Y %T'`
 
 validate_tarball $gzish
   #sets $name to name of project in this tarball

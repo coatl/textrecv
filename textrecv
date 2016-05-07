@@ -255,9 +255,8 @@ END
   mkdir $tarrunner_bin
   chown -h "$username:$username"  $tarrunner_bin
 
-  ln -sf `which file rm gunzip tar chmod` $tarrunner_bin/
+  ln -sf `which file rm gunzip gzip tar chmod wget` $tarrunner_bin/
   chown -h "$username":"$username" $tarrunner_bin $tarrunner_bin/*
-    #why which?
 
   if [ "$dropprivs_via_sudo" != "false" ] ; then
     fragment="$username"_controls_a_textrecv_tarrunner

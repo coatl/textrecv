@@ -2,7 +2,7 @@
 
 #tunables
 #gpgname=checkin_vm_code_integrity
-gpgname=sensitive
+gpgname=`whoami`
 listenaddress=172.16.233.193
 #listenport=19300
 if [ -z "$dropprivs_via_sudo" ]; then

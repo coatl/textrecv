@@ -641,7 +641,7 @@ as_tarrunner tar xzf - <$gzish -C $tarCdir \
   --exclude=.. --exclude=.git --exclude-vcs  || die 12 "tar extract failed: $?"
 
 if [ "$dropprivs_via_sudo" != "false" ]; then
-  as_tarrunner chmod -R a+r $tarCdir/$name
+  as_tarrunner chmod -R a+rX $tarCdir
   cp -dR --preserve=mode,timestamps $tarCdir/$name/ staging:/
   chgrp -hR "$me" staging:/$name
 fi

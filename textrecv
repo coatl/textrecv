@@ -38,6 +38,15 @@ function edit_while_locked(){
   ) 9>"$file".lock:
 }
 
+function as_tarrunner(){ #
+  if [ "$dropprivs_via_sudo" == "false" ]; then
+    #\echo skipping sudo around $* 1>&2
+    "$@"
+  else
+    sudo -u "$me"_tarrunner $tarrunner_bin/"$@"
+  fi
+}
+
 #check for wrapping an editor
 prog=`basename "$0"`
 if [ "$prog" == pico -o "$prog" == nano -o "$prog" == vi -o "$prog" == vim ]; then
@@ -52,11 +61,19 @@ Usage:
   textrecv --server port             #start the textrecv server
   textrecv --install username port   #install textrecv and setup to run automatically
   textrecv --uninstall               #undo install
+  textrecv --as-tarrunner cmd args... #run a command as this user's tarrunner
   textrecv --test                    #built-in test
   textrecv --help                    #this page
 END
 
   exit
+fi
+
+if [ "$1" == "--as-tarrunner" ]; then
+  shift
+  tarrunner_bin=/home/"$me"/tarrunner_bin
+  as_tarrunner "$@"
+  exit $?
 fi
 
 if [ "$1" == "--test" ]; then
@@ -117,6 +134,11 @@ if [ "$1" == "--install" ]; then #
   fi
 
   #create textrecv user (which will run the server) and lower-privilege auxillary user which untars things
+
+    #for equivalent of adduser on macos, see
+    #https://superuser.com/questions/202814
+    #.... if it ever matters. if you're using
+    #textrecv on macos, you're probably doing it wrong.
   if ! egrep "^${username}:" /etc/passwd ; then
     yes | adduser --quiet --disabled-login "$username" >/dev/null
   fi
@@ -135,8 +157,6 @@ if [ "$1" == "--install" ]; then #
     chown -R "$username:$username" "$tr_home" "$crontab"
     chmod -R go-w "$tr_home" "$crontab"
   fi
-  #for equivalent of adduser on macos, see https://superuser.com/questions/202814
-  #.... if it ever matters. if you're using textrecv on macos, you're probably doing it wrong.
 
   userhomedir=$(eval echo $(echo ~${username}))
 
@@ -500,14 +520,6 @@ function validate_directory(){ #
 
 }
 
-function as_tarrunner(){ #
-  if [ "$dropprivs_via_sudo" == "false" ]; then
-    #\echo skipping sudo around $* 1>&2
-    $*
-  else
-    sudo -u "$me"_tarrunner $tarrunner_bin/$*
-  fi
-}
 
 
 function ungpg(){ #

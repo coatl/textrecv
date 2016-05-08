@@ -122,6 +122,18 @@ if [ "$1" == "--install" ]; then #
   fi
   if [ "$dropprivs_via_sudo" != "false" ] ; then
     yes | adduser --quiet --ingroup nogroup --disabled-login "$username"_tarrunner >/dev/null
+
+    tr_home=/home/"$username"_tarrunner
+    rm -f "$tr_home"/*
+    rm -f "$tr_home"/.[a-z]*
+    echo exit >"$tr_home/.bashrc"
+    echo exit >"$tr_home/.profile"
+
+    crontab=/var/spool/cron/crontabs/"$username"_tarrunner
+    truncate --size=0 "$crontab"
+
+    chown -R "$username:$username" "$tr_home" "$crontab"
+    chmod -R go-w "$tr_home" "$crontab"
   fi
   #for equivalent of adduser on macos, see https://superuser.com/questions/202814
   #.... if it ever matters. if you're using textrecv on macos, you're probably doing it wrong.

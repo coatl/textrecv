@@ -413,6 +413,7 @@ function huh(){
 
 function validate_tarball(){
   tarball=$1
+  errcode=0
 
   #tarball must be a tar in the gnu tar format
   if ! as_tarrunner gunzip -c <$tarball | as_tarrunner file -b - | egrep -q '^POSIX tar archive \(GNU\)$' ; then
@@ -429,11 +430,13 @@ function validate_tarball(){
 
   #examine listing for weird stuff
   if egrep -i --color=never '^[^ ]*[st]' $listing; then #look for setuid/sticky bits
-    die 19 "bizarre permissions on file in tarball"
+    echo "bizarre permissions on file in tarball" 1>&2
+    errcode=19
   fi
   if egrep -v --color=never '^[d-]([r-][w-][x-]){3} ' $listing; then
     #special file of some kind?: volume label, fifo, device, symlink, hardlink
-    die 22 "special file or bad permissions in tarball"
+    echo "special file or bad permissions in tarball" 1>&2
+    errcode=22
   fi
 
   cut -d" " -f6- < $listing > $filename_listing
@@ -445,25 +448,36 @@ function validate_tarball(){
       #paths starting with / (absolute filename)
       #filenames startign with - @ or % (could be special to shell or other programs)
       #filenames with funny (non-printable-ascii or shell special) chars in them
-    die 21 "bizarre filename in tarball"
+    echo "bizarre filename in tarball" 1>&2
+    errcode=21
   fi
 
   cut -d/ -f1 < $filename_listing | sort -u > topdir:
     #topdir is:
       #6th space-delimited field in $listing (tar tv output),
       #first slash-delimited field within that,
-  (( `wc -l <topdir:` == 1 )) || die 10 "all files in tarball should be in one directory"
+
+  (( `wc -l <topdir:` == 1 )) ||
+    die 10 "all files in tarball should be in one directory"
     #must have only one value across the entire file
-  (( `wc -c <topdir:` '<=' 200 )) || die 35 "toplevel dirname should be shortish"
+
+  (( `wc -c <topdir:` '<=' 200 )) ||
+    die 35 "toplevel dirname should be shortish"
     #no more than 199 characters
-  egrep -q '^[a-zA-Z0-9_.,-]+$' --color=never topdir: || die 31 "bad top level dir name"
+
+  egrep -q '^[a-zA-Z0-9_.,-]+$' --color=never topdir: ||
+    die 31 "bad top level dir name"
     #only limited chars allowed in topdir name
+
   name=`cat topdir:`
   rm topdir:
 
+  if [ "$errcode" "!=" "0" ]; then
+    die "$errcode" "error during validate_tarball"
+  fi
 }
 
-function validate_directory(){ #
+function validate_directory(){
   dir=$1
   action=$2
   if [ action == '-print' ]; then
@@ -522,7 +536,7 @@ function validate_directory(){ #
 
 
 
-function ungpg(){ #
+function ungpg(){
   #typical gpg2 output looks like this:
     #gpg: encrypted with 4096-bit RSA key, ID CAAB59A0, created 2014-08-22
     #      "caleb clausen (checkin_vm_code_integrity) <no@tha.nks>"

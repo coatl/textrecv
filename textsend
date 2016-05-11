@@ -1,9 +1,9 @@
 #!/bin/bash
 
 #configvars
-gpgname=sensitive
+gpgname=dev
 server=172.16.233.193
-port=19363
+port=19333
 
 
 textsend=`which textsend`
@@ -74,6 +74,12 @@ if [ -n "$skip_nc" ]; then
   }
 fi
 
+if [ "$1" == "-v" ]; then
+  shift
+  verbose=true
+  verboseflag=-v
+fi
+
 dir=$1
 if [ -n "$dir" ]; then
   cd $dir || die 1 "cd failed"
@@ -88,7 +94,7 @@ if [ -e "$name/.textsend.flag:" ]; then
   newer_than_flag=`find $name -newer $name/.textsend.flag: -print | egrep -v "^$name/([^/]+/)*(\.git(/|$)|[^/]+~$)"`
 
   if [ "$newer_than_flag" == '' ]; then
-    #no changes since last update, so do nothing
+    echo "no changes since last update, so do nothing" 1>&2
     exit
   fi
 fi
@@ -102,11 +108,12 @@ fi
 
 set -o pipefail
 tar czf - $name                                                   \
-  $NO_SELINUX --no-acls --no-xattrs --one-file-system            \
-  --exclude-vcs --exclude-backups --exclude=$name/*:*             \
-| gpg2 --sign                                                     \
+  $NO_SELINUX --no-acls --no-xattrs --one-file-system             \
+  --exclude-vcs --exclude-backups                                 \
+  --exclude='*:*' --exclude='[-@%]*'                              \
+| gpg2 $verboseflag --sign                                        \
   -u $gpgname --yes --batch --no-tty --no-auto-check-trustdb -    \
-| nc -n $server $port                                             \
+| nc $verboseflag -n $server $port                                \
 || die 4 "tar/gpg2/nc pipeline failed"
 
 touch "$name"/.textsend.flag: #update flag indicating last successful send

@@ -35,24 +35,18 @@ cd data
   chmod a-wx ../data.tar.gz
 cd ..
 
-#make sure every file mentioned in $dir/contents
-#is present in $dir/data/ and vice versa
-temp=`tempfile -p rgemt`
-find data -type f | cut -d/ -f2- | cat - contents | sort | uniq -u >"$temp"
+#make sure every file mentioned in $dir/MANIFEST
+#is present in $dir/ and vice versa
+sha256sum -c --quiet MANIFEST || die "sha mismatch in MANIFEST"
+temp=`tempfile -p rgemm`
+contents=`tempfile -p rgemc`
+cut -d" " -f3- <MANIFEST >"$contents"
+find . -type f | cut -d/ -f2- | egrep -v '^MANIFEST$|^data\.tar\.gz$|^metadata\.gz$' | cat - "$contents" | sort | uniq -u >"$temp"
 if [ -s "$temp" ]; then
-  echo "mismatch(es) between contents and data/ : "
+  echo "mismatch(es) between MANIFEST and data/ : "
   cat "$temp"
   exit 1
 fi 1>&2
-
-#was:
-  #while read cfile; do
-  #  if [ ! -e "$cfile" ]; then
-  #    echo "file missing from contents: $cfile" 1>&2
-  #    exit 1
-  #  fi
-  #done <../contents
-
 
 #ensure only allowed file contents (from current project) in gem
 gem_sha=`tempfile -p gemsh`

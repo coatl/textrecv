@@ -28,9 +28,9 @@ done
 rm -f data.tar.gz
 
 cd data
+  find . -mindepth 1 -type f| cut -d/ -f2- | \
   textrecv --as-tarrunner \
-    tar czf - `find . -mindepth 1 -maxdepth 1| cut -d/ -f2-` \
-      --owner=wheel --group=wheel \
+    tar czf - -T - --owner=wheel --group=wheel \
       >../data.tar.gz
   chmod a-wx ../data.tar.gz
 cd ..

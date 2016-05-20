@@ -41,7 +41,7 @@ sha256sum -c --quiet MANIFEST || die "sha mismatch in MANIFEST"
 temp=`tempfile -p rgemm`
 contents=`tempfile -p rgemc`
 cut -d" " -f3- <MANIFEST >"$contents"
-find . -type f | cut -d/ -f2- | egrep -v '^MANIFEST$|^data\.tar\.gz$|^metadata\.gz$' | cat - "$contents" | sort | uniq -u >"$temp"
+find . -type f | cut -d/ -f2- | egrep -v '^MANIFEST$|^data\.tar\.gz$|^metadata\.gz$|^checksums\.yaml(\.gz)?$' | cat - "$contents" | sort | uniq -u >"$temp"
 if [ -s "$temp" ]; then
   echo "mismatch(es) between MANIFEST and data/ : "
   cat "$temp"

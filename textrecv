@@ -674,9 +674,13 @@ else
   tarCdir=staging:/
 fi
 
+set -o pipefail
 as_tarrunner tar xzf - <$gzish -C $tarCdir \
   --no-xattrs --no-selinux --no-acls --one-file-system \
-  --exclude=.. --exclude=.git --exclude-vcs  || die 12 "tar extract failed: $?"
+  --exclude=.. --exclude=.git --exclude-vcs  \
+  2>&1 | { egrep -v 'time stamp [0-9.: -]+ is [0-9.: -]+[smhd]? in the future$'; true; } \
+  || die 12 "tar extract failed: $?"
+set +o pipefail
 
 if [ "$dropprivs_via_sudo" != "false" ]; then
   as_tarrunner chmod -R a+rX $tarCdir

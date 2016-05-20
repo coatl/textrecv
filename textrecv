@@ -714,19 +714,20 @@ fi
 cd staging:
   find $name -type f -print | xargs -L100 sha256sum > ../metadata:/$name.sha256sum.new
 
-  for f in `find $name -print`; do
-    if [ -d $f ]; then
-      mkdir -p ../$f
+  find $name -type d -print | perl -wpe 's/^/..\//' | xargs -L20 mkdir -p
+  find $name -type f -print | while read f; do
+    if flock -n 9 ; then
+      if [ ! -e ../metadata/$name.sha256sum ] || egrep " $f$" ../metadata:/$name.sha256sum | sha256sum -c - ; then #if got lock and unchanged from last time
+        cp -f -a --parents $f ../
+      else
+        cp -f -a $f ../$f.new:
+        echo "$f changed since last sync, so copied to $f.new:" 1>&2
+      fi
+      rm ../$f.lock:
     else
-      (
-        if flock -n 9 && [ ! -e ../metadata/$name.sha256sum ] || egrep " $f$" ../metadata:/$name.sha256sum | sha256sum -c - ; then #if got lock and unchanged from last time
-          cp -a --parents $f ../
-          rm ../$f.lock:
-        else
-          cp -a $f ../$f.new:
-        fi
-      ) 9>../$f.lock:
-    fi
+      cp -f -a $f ../$f.new:
+      echo "$f under edit, so copied to $f.new:" 1>&2
+    fi 9>../$f.lock:
   done
 
   mv ../metadata:/$name.sha256sum{.new,}

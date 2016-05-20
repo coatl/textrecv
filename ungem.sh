@@ -18,4 +18,4 @@ cd data
   tar xzf ../data.tar.gz
 cd ..
 rm -f data.tar.gz
-find . -type f -print | cut -d/ -f2- | egrep -v '^MANIFEST$' | xargs -L20 sha256sum >MANIFEST
+find . -type f -print | cut -d/ -f2- | egrep -v '^(MANIFEST|checksums\.yaml)$' | xargs -L20 sha256sum >MANIFEST

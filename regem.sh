@@ -107,6 +107,7 @@ rm -f checksums.yaml{,.gz}
 } > checksums.yaml
 chmod a-wx checksums.yaml
 textrecv --as-tarrunner gzip -c -9 -n checksums.yaml >checksums.yaml.gz
+chmod a-wx checksums.yaml.gz
 
 #pack data.tar.gz, metadata, checksums.yaml up as gem file
 textrecv --as-tarrunner tar cf -    \
